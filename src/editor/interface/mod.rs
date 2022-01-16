@@ -3,9 +3,9 @@
 //! Fundamentally, the UI is split into graphics rendering and state management in response to
 //! input events, both of which are managed within the `EditorInterface` type.
 
-use std::sync::mpsc::Receiver;
+use std::sync::{mpsc::Receiver, Arc};
 
-use vst_window::{EditorWindow, EventSource};
+use vst_window::EditorWindow;
 
 use crate::plugin_state::StateUpdate;
 
@@ -41,8 +41,8 @@ pub(super) const SIZE_Y: usize = (image_consts::ORIG_BG_SIZE_Y as f64 * SCALE) a
 /// Represents a window containing an editor interface. A new one is used each time the parent
 /// window provided by the host DAW is opened or closed.
 pub(super) struct EditorInterface {
-    renderer: graphics::Renderer,
-    event_source: EventSource,
+    renderer: graphics::Renderer<EditorWindow>,
+    window: Arc<EditorWindow>,
     state: InterfaceState,
 }
 
@@ -51,14 +51,14 @@ impl EditorInterface {
     /// from the corresponding `EventSource`.
     pub fn new(
         window: EditorWindow,
-        event_source: EventSource,
         initial_state: InterfaceState,
     ) -> Self {
-        let renderer = graphics::Renderer::new(window);
+        let window = Arc::new(window);
+        let renderer = graphics::Renderer::new(window.clone());
 
         Self {
             renderer,
-            event_source,
+            window,
             state: initial_state,
         }
     }
@@ -75,7 +75,7 @@ impl EditorInterface {
             self.state.react_to_control_event(event);
         }
 
-        while let Some(event) = self.event_source.poll_event() {
+        while let Some(event) = self.window.poll_event() {
             self.state.react_to_window_event(event, remote_state);
         }
 
