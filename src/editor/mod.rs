@@ -6,7 +6,10 @@
 //! graphically, instructs the overall plugin state to update in response to window input events,
 //! and handles notifications of state updates that occur on the processing thread.
 
-use std::sync::{mpsc::Receiver, Arc};
+use std::{
+    sync::{mpsc::Receiver, Arc},
+    time::Duration,
+};
 
 use vst::editor::Editor;
 use vst::plugin::PluginParameters;
@@ -46,11 +49,18 @@ impl Editor for PluginEditor {
 
     fn open(&mut self, parent: *mut core::ffi::c_void) -> bool {
         if self.opened_interface.is_none() {
-            let (window, event_source) = setup(parent, (SIZE_X as i32, SIZE_Y as i32));
-            (*self.remote_state).set_event_subscription(true);
-            let initial_state = InterfaceState::new(self.remote_state.get_parameter(0));
-            self.opened_interface = Some(EditorInterface::new(window, event_source, initial_state));
-            true
+            match unsafe { setup(parent, (SIZE_X as i32, SIZE_Y as i32)) } {
+                Ok(window) => {
+                    (*self.remote_state).set_event_subscription(true);
+                    let initial_state = InterfaceState::new(self.remote_state.get_parameter(0));
+                    self.opened_interface = Some(EditorInterface::new(window, initial_state));
+                    true
+                }
+                Err(error) => {
+                    log::error!("Failed to open editor window: {}", error);
+                    false
+                }
+            }
         } else {
             false
         }

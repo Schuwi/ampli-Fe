@@ -15,7 +15,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 vst = "^ 0.2"
-vst_window = "^ 0.3"
+#vst_window = "^ 0.3"
+vst_window = { git = "https://github.com/Schuwi/vst_window", rev = "f97b545" }
 once_cell = "^ 1.4"
 wgpu = { version = "^ 0.12", features = ["spirv"] }
 wgpu_glyph = "^ 0.16"
@@ -24,6 +25,8 @@ zerocopy = "^ 0.3"
 cgmath = "^ 0.17"
 futures = "^ 0.3"
 png = "^ 0.16"
+log = "0.4"
+env_logger = "0.9"
 
 [build-dependencies]
 glsl-to-spirv = "^ 0.1"

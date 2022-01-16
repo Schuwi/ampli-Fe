@@ -55,6 +55,8 @@ impl AmpliFeVst {
 
         let dsp = PluginDsp::new(dsp_recv);
 
+        log::debug!("Initialized plugin");
+
         Self {
             dsp,
             state_handle,
@@ -73,6 +75,7 @@ impl Default for AmpliFeVst {
 /// Main `vst` plugin implementation.
 impl Plugin for AmpliFeVst {
     fn new(host: HostCallback) -> Self {
+        env_logger::try_init().unwrap_or(());
         Self::new_maybe_host(Some(host))
     }
 

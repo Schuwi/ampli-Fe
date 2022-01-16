@@ -3,6 +3,8 @@
 //! In this plugin, rendering is achieved with `wgpu`, which provides a very low-level API. This is
 //! very flexible, but requires a lot of setup!
 
+use std::sync::Arc;
+
 use cgmath::{prelude::SquareMatrix, Matrix4, Vector3};
 use once_cell::sync::Lazy;
 use wgpu::util::DeviceExt;
@@ -17,7 +19,9 @@ use super::{
 const MSAA_SAMPLES: u32 = 4;
 
 /// Contains all handles to GPU resources required for rendering the editor interface.
-pub(super) struct Renderer {
+pub(super) struct Renderer<W: raw_window_handle::HasRawWindowHandle> {
+    _handle: Arc<W>,
+
     device: wgpu::Device,
     queue: wgpu::Queue,
     multisampled_framebuffer: wgpu::TextureView,
@@ -89,16 +93,13 @@ static SCALE_MOVE_KNOB_TRANSFORM: Lazy<Matrix4<f32>> = Lazy::new(|| {
     )
 });
 
-impl Renderer {
+impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
     /// Creates a new `Renderer` by initializing the GPU to prepare it for rendering.
-    pub fn new<W: raw_window_handle::HasRawWindowHandle>(handle: W) -> Self {
+    pub fn new(handle: Arc<W>) -> Self {
         let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
 
-        // Acquire the window as a surface to be rendered on.
-        // This is the only unsafe code in the plugin; it is only required to satisfy the
-        // `raw_window_handle` API. Safety is upheld by taking ownership of `handle` in the
-        // function signature, ensuring it is only ever used to create a single surface.
-        let surface = unsafe { instance.create_surface(&handle) };
+        // retaining shared ownership of `handle` ensures it is not dropped before we are done
+        let surface = unsafe { instance.create_surface(handle.as_ref()) };
 
         // Get a handle to the GPU and a queue of commands to be uploaded to it while rendering.
         let (device, queue) = futures::executor::block_on(async {
@@ -298,6 +299,8 @@ impl Renderer {
         let text_renderer = GlyphBrushBuilder::using_fonts(fonts).build(&device, render_format);
 
         Self {
+            _handle: handle,
+
             device,
             queue,
             multisampled_framebuffer,
