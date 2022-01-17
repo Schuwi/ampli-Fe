@@ -1556,7 +1556,7 @@ dependencies = [
 [[package]]
 name = "vst_window"
 version = "0.2.0"
-source = "git+https://github.com/Schuwi/vst_window?rev=922f282#922f2821ed6d2ba9bee0dca492a829ad9f662151"
+source = "git+https://github.com/Schuwi/vst_window?rev=726381c#726381c3aca0ae2dd3c5c5729b6d10a0b0a094a6"
 dependencies = [
  "anyhow",
  "cocoa",
