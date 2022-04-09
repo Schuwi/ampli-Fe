@@ -53,12 +53,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.52"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84450d0b4a8bd1ba4144ce8ce718fbc5d071358b1e5384bace6536b3d1f2d5b3"
-
-[[package]]
 name = "approx"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1556,16 +1550,14 @@ dependencies = [
 [[package]]
 name = "vst_window"
 version = "0.2.0"
-source = "git+https://github.com/Schuwi/vst_window?rev=726381c#726381c3aca0ae2dd3c5c5729b6d10a0b0a094a6"
+source = "git+https://github.com/Schuwi/vst_window?rev=645018e#645018ecf2b0e40ca81440aafb45defaa5f42650"
 dependencies = [
- "anyhow",
  "cocoa",
  "gfx-backend-vulkan",
  "lazy_static",
  "log",
  "objc",
  "raw-window-handle",
- "thiserror",
  "wchar",
  "winapi",
  "windows-error",
