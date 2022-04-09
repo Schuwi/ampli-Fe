@@ -25,7 +25,7 @@ pub(super) struct Renderer<W: raw_window_handle::HasRawWindowHandle> {
     device: wgpu::Device,
     queue: wgpu::Queue,
     multisampled_framebuffer: wgpu::TextureView,
-    swap_chain: wgpu::SwapChain,
+    surface: wgpu::Surface,
 
     text_renderer: GlyphBrush<()>,
     /// Required by `wgpu_glyph`
@@ -96,7 +96,7 @@ static SCALE_MOVE_KNOB_TRANSFORM: Lazy<Matrix4<f32>> = Lazy::new(|| {
 impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
     /// Creates a new `Renderer` by initializing the GPU to prepare it for rendering.
     pub fn new(handle: Arc<W>) -> Self {
-        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+        let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
 
         // retaining shared ownership of `handle` ensures it is not dropped before we are done
         let surface = unsafe { instance.create_surface(handle.as_ref()) };
@@ -105,7 +105,8 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
         let (device, queue) = futures::executor::block_on(async {
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::Default,
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    force_fallback_adapter: false,
                     compatible_surface: Some(&surface),
                 })
                 .await
@@ -114,11 +115,9 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
             adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
+                        label: None,
                         features: wgpu::Features::empty(),
                         limits: wgpu::Limits::default(),
-                        // Shader validation is really useful when it works :)
-                        // https://github.com/gfx-rs/wgpu-rs/issues/573
-                        shader_validation: false,
                     },
                     None,
                 )
@@ -129,10 +128,10 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
         // Shaders are written in GLSL and compiled to SPIR-V from `build.rs`. They describe how
         // to layout points in space (vertex shaders), or how to render triangular fragments to
         // the screen (fragment shaders). The resulting SPIR-V is loaded to the GPU at runtime.
-        let vs_module = device.create_shader_module(wgpu::include_spirv!(
+        let vs_module = device.create_shader_module(&wgpu::include_spirv!(
             "../../../assets/generated/spirv/shader.vert.spv"
         ));
-        let fs_module = device.create_shader_module(wgpu::include_spirv!(
+        let fs_module = device.create_shader_module(&wgpu::include_spirv!(
             "../../../assets/generated/spirv/shader.frag.spv"
         ));
 
@@ -144,9 +143,10 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
                 // vertex shader.
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -155,11 +155,11 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
                 // appearance of a particular set of geometry in the fragment shader.
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
                         multisampled: false,
-                        component_type: wgpu::TextureComponentType::Float,
-                        dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
                 },
@@ -167,27 +167,26 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
                 // the texture in the fragment shader.
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
         });
 
         let render_format = wgpu::TextureFormat::Bgra8Unorm;
-        let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: render_format,
             width: SIZE_X as u32,
             height: SIZE_Y as u32,
             present_mode: wgpu::PresentMode::Mailbox,
         };
-
-        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        surface.configure(&device, &config);
 
         // A multisampled framebuffer is used for anti-aliasing.
         let multisampled_framebuffer =
-            create_multisampled_framebuffer(&device, &sc_desc, MSAA_SAMPLES);
+            create_multisampled_framebuffer(&device, &config, MSAA_SAMPLES);
 
         // The graphics pipeline specifies what behavior to use when rendering to the screen.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -198,57 +197,48 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::Back,
-                ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[wgpu::ColorStateDescriptor {
-                format: sc_desc.format,
-                color_blend: wgpu::BlendDescriptor {
-                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                alpha_blend: wgpu::BlendDescriptor {
-                    src_factor: wgpu::BlendFactor::One,
-                    dst_factor: wgpu::BlendFactor::One,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                write_mask: wgpu::ColorWrite::ALL,
-            }],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint32,
-                vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttributeDescriptor {
-                            format: wgpu::VertexFormat::Float4,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttributeDescriptor {
-                            format: wgpu::VertexFormat::Float2,
-                            offset: 4 * 4,
-                            shader_location: 1,
-                        },
-                    ],
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x2],
                 }],
             },
-            sample_count: MSAA_SAMPLES,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
+            fragment: Some(wgpu::FragmentState {
+                module: &fs_module,
+                entry_point: "main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: MSAA_SAMPLES,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -274,12 +264,12 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
                     Vertex::new(1., -1., 1., 1.),
                 ]
                 .as_bytes(),
-                usage: wgpu::BufferUsage::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX,
             });
         let rectangle_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: &[0u32, 1, 2, 2, 3, 0].as_bytes(),
-            usage: wgpu::BufferUsage::INDEX,
+            usage: wgpu::BufferUsages::INDEX,
         });
 
         // Different bind groups for the background and pointer allow them to be rendered with a
@@ -314,7 +304,7 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
             device,
             queue,
             multisampled_framebuffer,
-            swap_chain,
+            surface,
 
             text_renderer,
             local_pool: futures::executor::LocalPool::new(),
@@ -333,7 +323,7 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
 
     /// Render a single frame of the given interface state to the screen.
     pub fn draw_frame(&mut self, state: &super::state::InterfaceState) {
-        if let Ok(frame) = self.swap_chain.get_current_frame() {
+        if let Ok(frame) = self.surface.get_current_texture() {
             let mut encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -351,14 +341,16 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
                     data.as_bytes(),
                 );
 
+                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
                 {
                     let mut rpass = Self::start_renderpass(
                         &mut encoder,
-                        &frame.output.view,
+                        &view,
                         &self.multisampled_framebuffer,
                     );
                     rpass.set_pipeline(&self.pipeline);
-                    rpass.set_index_buffer(self.rectangle_index_buffer.slice(..));
+                    rpass.set_index_buffer(self.rectangle_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     rpass.set_vertex_buffer(0, self.rectangle_vertex_buffer.slice(..));
 
                     // draw background
@@ -397,7 +389,7 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
                         &self.device,
                         &mut self.staging_belt,
                         &mut encoder,
-                        &frame.output.view,
+                        &view,
                         SIZE_X as u32,
                         SIZE_Y as u32,
                     )
@@ -412,6 +404,8 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
                 .spawn(self.staging_belt.recall())
                 .expect("Recall staging belt");
             self.local_pool.run_until_stalled();
+
+            frame.present();
         }
     }
 
@@ -422,8 +416,8 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
         view: &'a wgpu::TextureView,
         multisampled_framebuffer: &'a wgpu::TextureView,
     ) -> wgpu::RenderPass<'a> {
-        let rpass_color_attachment = wgpu::RenderPassColorAttachmentDescriptor {
-            attachment: multisampled_framebuffer,
+        let rpass_color_attachment = wgpu::RenderPassColorAttachment {
+            view: multisampled_framebuffer,
             resolve_target: Some(view),
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -432,6 +426,7 @@ impl<W: raw_window_handle::HasRawWindowHandle> Renderer<W> {
         };
 
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
             color_attachments: &[rpass_color_attachment],
             depth_stencil_attachment: None,
         })
@@ -455,7 +450,7 @@ fn make_bind_group(
             transform: initial_transform.into(),
         }
         .as_bytes(),
-        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
     let decoder = png::Decoder::new(png_image);
@@ -466,7 +461,7 @@ fn make_bind_group(
     let texture_extent = wgpu::Extent3d {
         width: info.width,
         height: info.height,
-        depth: 1,
+        depth_or_array_layers: 1,
     };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -475,21 +470,17 @@ fn make_bind_group(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
     });
 
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     queue.write_texture(
-        wgpu::TextureCopyView {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-        },
+        texture.as_image_copy(),
         &image_data,
-        wgpu::TextureDataLayout {
+        wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: 4 * info.width,
-            rows_per_image: 0,
+            bytes_per_row: Some(std::num::NonZeroU32::new(4 * info.width).unwrap()),
+            rows_per_image: None,
         },
         texture_extent,
     );
@@ -499,7 +490,7 @@ fn make_bind_group(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
+                resource: uniform_buf.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -520,13 +511,13 @@ fn make_bind_group(
 /// surface, producing a more smooth anti-aliased appearance.
 fn create_multisampled_framebuffer(
     device: &wgpu::Device,
-    sc_desc: &wgpu::SwapChainDescriptor,
+    sc_desc: &wgpu::SurfaceConfiguration,
     sample_count: u32,
 ) -> wgpu::TextureView {
     let multisampled_texture_extent = wgpu::Extent3d {
         width: sc_desc.width,
         height: sc_desc.height,
-        depth: 1,
+        depth_or_array_layers: 1,
     };
     let multisampled_frame_descriptor = &wgpu::TextureDescriptor {
         label: None,
@@ -535,7 +526,7 @@ fn create_multisampled_framebuffer(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: sc_desc.format,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
     };
 
     device
