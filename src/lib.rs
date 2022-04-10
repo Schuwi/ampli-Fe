@@ -72,10 +72,24 @@ impl Default for AmpliFeVst {
     }
 }
 
+fn init_logger() {
+    #[cfg(target_os = "windows")]
+    {
+        let level = env_logger::builder().build().filter();
+
+        if let Some(level) = level.to_level() {
+            windebug_logger::init_with_level(level).unwrap_or(());
+        }
+    }
+
+    env_logger::try_init().unwrap_or(());
+}
+
 /// Main `vst` plugin implementation.
 impl Plugin for AmpliFeVst {
     fn new(host: HostCallback) -> Self {
-        env_logger::try_init().unwrap_or(());
+        init_logger();
+
         Self::new_maybe_host(Some(host))
     }
 

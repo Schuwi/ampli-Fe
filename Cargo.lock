@@ -60,6 +60,7 @@ dependencies = [
  "vst_window",
  "wgpu",
  "wgpu_glyph",
+ "windebug_logger",
  "zerocopy",
 ]
 
@@ -1552,7 +1553,7 @@ dependencies = [
  "log",
  "objc",
  "raw-window-handle",
- "wchar",
+ "wchar 0.11.0",
  "winapi",
  "windows-error",
  "x11rb",
@@ -1638,11 +1639,33 @@ checksum = "3d958d035c4438e28c70e4321a2911302f10135ce78a9c7834c0cab4123d06a2"
 
 [[package]]
 name = "wchar"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c74d010bf16569f942b0b7d3c777dd674f8ee539b48d809dc548b3453039c2df"
+dependencies = [
+ "proc-macro-hack",
+ "wchar-impl 0.6.0",
+]
+
+[[package]]
+name = "wchar"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1ca6ea80317e76471c3aa6d47efb151ef04538960ab810845a1c854f5cd7d8c"
 dependencies = [
- "wchar-impl",
+ "wchar-impl 0.11.0",
+]
+
+[[package]]
+name = "wchar-impl"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f135922b9303f899bfa446fce1eb149f43462f1e9ac7f50e24ea6b913416dd84"
+dependencies = [
+ "proc-macro-hack",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -1808,6 +1831,17 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "windebug_logger"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b90700bc9c2d70d440883623403cd3417235c935efba4356329e617937cd220"
+dependencies = [
+ "log",
+ "wchar 0.6.1",
+ "winapi",
+]
 
 [[package]]
 name = "windows-error"
